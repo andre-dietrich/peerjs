@@ -158,6 +158,17 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 	 * Closes the media connection.
 	 */
 	close(): void {
+		if (this.localStream) {
+			this.localStream.getTracks().forEach((track) => track.stop());
+			this.localStream = null;
+		}
+
+		if (this.remoteStream) {
+			this.remoteStream.getTracks().forEach((track) => track.stop());
+			this.remoteStream = null;
+		}
+
+		// Continue with existing close logic
 		if (this._negotiator) {
 			this._negotiator.cleanup();
 			this._negotiator = null;

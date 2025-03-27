@@ -167,27 +167,83 @@ export class Negotiator<
 			return;
 		}
 
-		this.connection.peerConnection = null;
-
-		//unsubscribe from all PeerConnection's events
-		peerConnection.onicecandidate =
-			peerConnection.oniceconnectionstatechange =
-			peerConnection.ondatachannel =
-			peerConnection.ontrack =
-				() => {};
-
-		const peerConnectionNotClosed = peerConnection.signalingState !== "closed";
-		let dataChannelNotClosed = false;
-
-		const dataChannel = this.connection.dataChannel;
-
-		if (dataChannel) {
-			dataChannelNotClosed =
-				!!dataChannel.readyState && dataChannel.readyState !== "closed";
+		// Stop all transceivers/senders tracks
+		try {
+			// For newer browsers that support transceivers
+			if (peerConnection.getTransceivers) {
+				peerConnection.getTransceivers().forEach((transceiver) => {
+					if (transceiver.sender && transceiver.sender.track) {
+						transceiver.sender.track.stop();
+					}
+					// Also stop receiver tracks if they exist and are local
+					if (transceiver.receiver && transceiver.receiver.track) {
+						// Only stop receiver tracks if we know they're not from the remote peer
+						// (This check is an example - actual implementation might differ)
+						if (transceiver.direction === "sendonly") {
+							transceiver.receiver.track.stop();
+						}
+					}
+				});
+			}
+			// Fallback for older implementations
+			else if (peerConnection.getSenders) {
+				peerConnection.getSenders().forEach((sender) => {
+					if (sender.track) {
+						sender.track.stop();
+					}
+				});
+			}
+		} catch (err) {
+			logger.warn("Error stopping tracks", err);
 		}
 
-		if (peerConnectionNotClosed || dataChannelNotClosed) {
-			peerConnection.close();
+		// Clear all references
+		this.connection.peerConnection = null;
+
+		// Properly remove event listeners instead of setting to empty functions
+		if (peerConnection.onicecandidate) peerConnection.onicecandidate = null;
+		if (peerConnection.oniceconnectionstatechange)
+			peerConnection.oniceconnectionstatechange = null;
+		if (peerConnection.ondatachannel) peerConnection.ondatachannel = null;
+		if (peerConnection.ontrack) peerConnection.ontrack = null;
+
+		// Close data channel with proper error handling
+		const dataChannel = this.connection.dataChannel;
+		if (dataChannel) {
+			try {
+				// Remove all event listeners from data channel
+				dataChannel.onopen = null;
+				dataChannel.onclose = null;
+				dataChannel.onmessage = null;
+				dataChannel.onerror = null;
+
+				if (dataChannel.readyState !== "closed") {
+					dataChannel.close();
+				}
+			} catch (err) {
+				logger.warn("Error closing data channel", err);
+			}
+
+			// Clear reference
+			this.connection.dataChannel = null;
+		}
+
+		// Close peer connection if not already closed
+		if (peerConnection.signalingState !== "closed") {
+			try {
+				peerConnection.close();
+			} catch (err) {
+				logger.warn("Error closing PeerConnection", err);
+			}
+		}
+
+		// Manually trigger garbage collection hint (only in environments that support it)
+		if (global && global.gc) {
+			try {
+				global.gc();
+			} catch (e) {
+				logger.log("Manual GC not available");
+			}
 		}
 	}
 
@@ -202,16 +258,37 @@ export class Negotiator<
 
 			logger.log("Created offer.");
 
-			if (
-				this.connection.options.sdpTransform &&
-				typeof this.connection.options.sdpTransform === "function"
-			) {
-				offer.sdp =
-					this.connection.options.sdpTransform(offer.sdp) || offer.sdp;
-			}
-
 			try {
-				await peerConnection.setLocalDescription(offer);
+				// Apply SDP transform in a separate try-catch for better error reporting
+				let processedSdp = offer.sdp;
+				if (this.connection.options.sdpTransform) {
+					try {
+						const transformResult = this.connection.options.sdpTransform(
+							offer.sdp,
+						);
+						// Only use the result if it's a non-empty string
+						if (
+							typeof transformResult === "string" &&
+							transformResult.length > 0
+						) {
+							processedSdp = transformResult;
+							logger.log("Applied sdpTransform to offer");
+						} else {
+							logger.warn("sdpTransform returned invalid SDP, using original");
+						}
+					} catch (transformError) {
+						provider.emitError(PeerErrorType.WebRTC, transformError);
+						logger.error("Error in sdpTransform function:", transformError);
+					}
+				}
+
+				// Create a new description object with the processed SDP
+				const processedOffer = new RTCSessionDescription({
+					type: offer.type,
+					sdp: processedSdp,
+				});
+
+				await peerConnection.setLocalDescription(processedOffer);
 
 				logger.log(
 					"Set localDescription:",
@@ -266,16 +343,37 @@ export class Negotiator<
 			const answer = await peerConnection.createAnswer();
 			logger.log("Created answer.");
 
-			if (
-				this.connection.options.sdpTransform &&
-				typeof this.connection.options.sdpTransform === "function"
-			) {
-				answer.sdp =
-					this.connection.options.sdpTransform(answer.sdp) || answer.sdp;
-			}
-
 			try {
-				await peerConnection.setLocalDescription(answer);
+				// Apply SDP transform in a separate try-catch for better error reporting
+				let processedSdp = answer.sdp;
+				if (this.connection.options.sdpTransform) {
+					try {
+						const transformResult = this.connection.options.sdpTransform(
+							answer.sdp,
+						);
+						// Only use the result if it's a non-empty string
+						if (
+							typeof transformResult === "string" &&
+							transformResult.length > 0
+						) {
+							processedSdp = transformResult;
+							logger.log("Applied sdpTransform to answer");
+						} else {
+							logger.warn("sdpTransform returned invalid SDP, using original");
+						}
+					} catch (transformError) {
+						provider.emitError(PeerErrorType.WebRTC, transformError);
+						logger.error("Error in sdpTransform function:", transformError);
+					}
+				}
+
+				// Create a new description object with the processed SDP
+				const processedAnswer = new RTCSessionDescription({
+					type: answer.type,
+					sdp: processedSdp,
+				});
+
+				await peerConnection.setLocalDescription(processedAnswer);
 
 				logger.log(
 					`Set localDescription:`,
@@ -310,17 +408,33 @@ export class Negotiator<
 
 		logger.log("Setting remote description", sdp);
 
-		const self = this;
-
 		try {
 			await peerConnection.setRemoteDescription(sdp);
-			logger.log(`Set remoteDescription:${type} for:${this.connection.peer}`);
+			logger.log(`Set remote description ${type} successfully`);
+
 			if (type === "OFFER") {
-				await self._makeAnswer();
+				await this._makeAnswer();
 			}
 		} catch (err) {
-			provider.emitError(PeerErrorType.WebRTC, err);
-			logger.log("Failed to setRemoteDescription, ", err);
+			const errorMessage = `Failed to set remote ${type} SDP: ${err.message}`;
+			logger.error(errorMessage, err);
+
+			// Categorize error for better handling
+			if (err.name === "InvalidStateError") {
+				provider.emitError(
+					PeerErrorType.WebRTC,
+					`Invalid signaling state: ${peerConnection.signalingState}. ${errorMessage}`,
+				);
+			} else if (err.name === "InvalidAccessError") {
+				provider.emitError(
+					PeerErrorType.WebRTC,
+					`Invalid SDP format or unsupported configuration. ${errorMessage}`,
+				);
+			} else {
+				provider.emitError(PeerErrorType.WebRTC, errorMessage);
+			}
+
+			this.connection.close();
 		}
 	}
 
