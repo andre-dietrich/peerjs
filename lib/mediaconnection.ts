@@ -158,8 +158,14 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 	 * Closes the media connection.
 	 */
 	close(): void {
+		// Check if this is a server-side connection
+		const isServer = this.provider?.options?.isServer || false;
+
 		if (this.localStream) {
-			this.localStream.getTracks().forEach((track) => track.stop());
+			// Only stop local tracks if this is NOT a server
+			if (!isServer) {
+				this.localStream.getTracks().forEach((track) => track.stop());
+			}
 			this._setLocalStream(null);
 		}
 
@@ -174,17 +180,16 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 			this._negotiator = null;
 		}
 
-		// Remove these direct assignments as we're using setter methods now
-		// this._localStream = null;
-		// this._remoteStream = null;
-
 		if (this.provider) {
 			this.provider._removeConnection(this);
 			this.provider = null;
 		}
 
 		if (this.options && this.options._stream) {
-			this.options._stream = null;
+			// Don't nullify the stream reference if we're a server
+			if (!isServer) {
+				this.options._stream = null;
+			}
 		}
 
 		if (!this.open) {

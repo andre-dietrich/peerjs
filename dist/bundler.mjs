@@ -1159,8 +1159,11 @@ class $5c1d08c7c57da9a3$export$4a84e95a2324ac29 extends (0, $5045192fc6d387ba$ex
 	 */ /**
 	 * Closes the media connection.
 	 */ close() {
+        // Check if this is a server-side connection
+        const isServer = this.provider?.options?.isServer || false;
         if (this.localStream) {
-            this.localStream.getTracks().forEach((track)=>track.stop());
+            // Only stop local tracks if this is NOT a server
+            if (!isServer) this.localStream.getTracks().forEach((track)=>track.stop());
             this._setLocalStream(null);
         }
         if (this.remoteStream) {
@@ -1172,14 +1175,14 @@ class $5c1d08c7c57da9a3$export$4a84e95a2324ac29 extends (0, $5045192fc6d387ba$ex
             this._negotiator.cleanup();
             this._negotiator = null;
         }
-        // Remove these direct assignments as we're using setter methods now
-        // this._localStream = null;
-        // this._remoteStream = null;
         if (this.provider) {
             this.provider._removeConnection(this);
             this.provider = null;
         }
-        if (this.options && this.options._stream) this.options._stream = null;
+        if (this.options && this.options._stream) // Don't nullify the stream reference if we're a server
+        {
+            if (!isServer) this.options._stream = null;
+        }
         if (!this.open) return;
         this._open = false;
         super.emit("close");
