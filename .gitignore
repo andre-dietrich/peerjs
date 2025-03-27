@@ -8,7 +8,6 @@ coverage
 *.pid
 *.[t]gz
 
-dist
 pids
 logs
 results
