@@ -245,13 +245,13 @@ export class Negotiator<
 		}
 
 		// Manually trigger garbage collection hint (only in environments that support it)
-		if (global && global.gc) {
+		/*if (global && global.gc) {
 			try {
 				global.gc();
 			} catch (e) {
 				logger.log("Manual GC not available");
 			}
-		}
+		}*/
 	}
 
 	private async _makeOffer(): Promise<void> {

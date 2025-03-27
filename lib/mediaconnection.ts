@@ -33,7 +33,7 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 	readonly label: string;
 
 	private _negotiator: Negotiator<MediaConnectionEvents, this>;
-	private _localStream: MediaStream;
+	private _localStream: MediaStream = null;
 	private _remoteStream: MediaStream;
 
 	/**
@@ -160,12 +160,12 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 	close(): void {
 		if (this.localStream) {
 			this.localStream.getTracks().forEach((track) => track.stop());
-			this.localStream = null;
+			this._setLocalStream(null);
 		}
 
 		if (this.remoteStream) {
 			this.remoteStream.getTracks().forEach((track) => track.stop());
-			this.remoteStream = null;
+			this._setRemoteStream(null);
 		}
 
 		// Continue with existing close logic
@@ -174,12 +174,12 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 			this._negotiator = null;
 		}
 
-		this._localStream = null;
-		this._remoteStream = null;
+		// Remove these direct assignments as we're using setter methods now
+		// this._localStream = null;
+		// this._remoteStream = null;
 
 		if (this.provider) {
 			this.provider._removeConnection(this);
-
 			this.provider = null;
 		}
 
@@ -194,5 +194,14 @@ export class MediaConnection extends BaseConnection<MediaConnectionEvents> {
 		this._open = false;
 
 		super.emit("close");
+	}
+
+	// Add this private setter method to match the _setLocalStream pattern
+	private _setRemoteStream(stream: MediaStream | null): void {
+		this._remoteStream = stream;
+	}
+
+	private _setLocalStream(stream: MediaStream | null): void {
+		this._localStream = stream;
 	}
 }

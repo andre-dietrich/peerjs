@@ -60,6 +60,7 @@ class PeerOptions implements PeerJSOption {
 	 * If possible *always use TLS*
 	 * :::
 	 */
+	isServer?: boolean;
 	secure?: boolean;
 	pingInterval?: number;
 	referrerPolicy?: ReferrerPolicy;
