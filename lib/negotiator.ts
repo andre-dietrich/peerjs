@@ -167,19 +167,26 @@ export class Negotiator<
 			return;
 		}
 
-		// Stop all transceivers/senders tracks
+		// We need to differentiate between client-side and server-side tracks
+		const isServer = this.connection.provider.options.isServer || false;
+
 		try {
 			// For newer browsers that support transceivers
 			if (peerConnection.getTransceivers) {
 				peerConnection.getTransceivers().forEach((transceiver) => {
+					// For server-side connections, we shouldn't stop the sender tracks as they might
+					// be shared with other client connections
 					if (transceiver.sender && transceiver.sender.track) {
-						transceiver.sender.track.stop();
+						// Only stop sender tracks if this is a client connection
+						if (!isServer) {
+							transceiver.sender.track.stop();
+						}
 					}
-					// Also stop receiver tracks if they exist and are local
+
+					// We can always stop receiver tracks from clients
 					if (transceiver.receiver && transceiver.receiver.track) {
-						// Only stop receiver tracks if we know they're not from the remote peer
-						// (This check is an example - actual implementation might differ)
-						if (transceiver.direction === "sendonly") {
+						// Only stop receiver tracks if we know they're not shared
+						if (transceiver.direction === "sendonly" || !isServer) {
 							transceiver.receiver.track.stop();
 						}
 					}
@@ -188,7 +195,7 @@ export class Negotiator<
 			// Fallback for older implementations
 			else if (peerConnection.getSenders) {
 				peerConnection.getSenders().forEach((sender) => {
-					if (sender.track) {
+					if (sender.track && !isServer) {
 						sender.track.stop();
 					}
 				});
