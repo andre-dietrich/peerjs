@@ -20,7 +20,7 @@ export class Negotiator<
 	constructor(readonly connection: ConnectionType) {}
 
 	/** Returns a PeerConnection object set up correctly (for data, media). */
-	startConnection(options: any) {
+	startConnection(options: any = {}) {
 		const peerConnection = this._startPeerConnection();
 
 		// Set the connection's PC.
@@ -28,6 +28,57 @@ export class Negotiator<
 
 		if (this.connection.type === ConnectionType.Media && options._stream) {
 			this._addTracksToConnection(options._stream, peerConnection);
+		}
+
+		// Add a delay for ICE candidate gathering
+		const pc = this.connection.peerConnection;
+
+		// Wait for ICE gathering to complete or timeout
+		const waitForRelayCandidate = new Promise<void>((resolve) => {
+			// Track if we've found a relay candidate
+			let relayFound = false;
+
+			// Monitor for relay candidates
+			const candidateHandler = (e: RTCPeerConnectionIceEvent) => {
+				if (e.candidate && e.candidate.candidate.includes("typ relay")) {
+					relayFound = true;
+					// Continue once we find a relay candidate
+					resolve();
+				}
+			};
+
+			pc.addEventListener("icecandidate", candidateHandler);
+
+			// Also check gathering state
+			const gatheringStateHandler = () => {
+				if (pc.iceGatheringState === "complete") {
+					// When gathering is complete, proceed with what we have
+					resolve();
+				}
+			};
+
+			pc.addEventListener("icegatheringstatechange", gatheringStateHandler);
+
+			// Set a maximum wait time (3 seconds) to prevent hanging
+			setTimeout(() => {
+				if (!relayFound) {
+					console.warn(
+						"No relay candidates found after timeout, proceeding anyway",
+					);
+				}
+				resolve();
+			}, 3000);
+		});
+
+		// In the connection process, add the wait before signaling
+		// This modifies the offer/answer creation flow
+		if (this.connection.type === ConnectionType.Media) {
+			// For media connections, wait before setting local description
+			const originalSetLocalDesc = pc.setLocalDescription.bind(pc);
+			pc.setLocalDescription = async (desc: RTCSessionDescriptionInit) => {
+				await waitForRelayCandidate;
+				return originalSetLocalDesc(desc);
+			};
 		}
 
 		// What do we need to do now?

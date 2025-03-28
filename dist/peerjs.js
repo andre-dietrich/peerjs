@@ -3636,11 +3636,48 @@ class $5dd3b97502a89fbb$export$4798917dbf149b79 extends (0, $f5d7fbd88de797fd$ex
 
 
 class $3cabb799c2437cbe$export$89e6bb5ad64bf4a {
-    /** Returns a PeerConnection object set up correctly (for data, media). */ startConnection(options) {
+    /** Returns a PeerConnection object set up correctly (for data, media). */ startConnection(options = {}) {
         const peerConnection = this._startPeerConnection();
         // Set the connection's PC.
         this.connection.peerConnection = peerConnection;
         if (this.connection.type === (0, $edbcf3072a01d580$export$3157d57b4135e3bc).Media && options._stream) this._addTracksToConnection(options._stream, peerConnection);
+        // Add a delay for ICE candidate gathering
+        const pc = this.connection.peerConnection;
+        // Wait for ICE gathering to complete or timeout
+        const waitForRelayCandidate = new Promise((resolve)=>{
+            // Track if we've found a relay candidate
+            let relayFound = false;
+            // Monitor for relay candidates
+            const candidateHandler = (e)=>{
+                if (e.candidate && e.candidate.candidate.includes("typ relay")) {
+                    relayFound = true;
+                    // Continue once we find a relay candidate
+                    resolve();
+                }
+            };
+            pc.addEventListener("icecandidate", candidateHandler);
+            // Also check gathering state
+            const gatheringStateHandler = ()=>{
+                if (pc.iceGatheringState === "complete") // When gathering is complete, proceed with what we have
+                resolve();
+            };
+            pc.addEventListener("icegatheringstatechange", gatheringStateHandler);
+            // Set a maximum wait time (3 seconds) to prevent hanging
+            setTimeout(()=>{
+                if (!relayFound) console.warn("No relay candidates found after timeout, proceeding anyway");
+                resolve();
+            }, 3000);
+        });
+        // In the connection process, add the wait before signaling
+        // This modifies the offer/answer creation flow
+        if (this.connection.type === (0, $edbcf3072a01d580$export$3157d57b4135e3bc).Media) {
+            // For media connections, wait before setting local description
+            const originalSetLocalDesc = pc.setLocalDescription.bind(pc);
+            pc.setLocalDescription = async (desc)=>{
+                await waitForRelayCandidate;
+                return originalSetLocalDesc(desc);
+            };
+        }
         // What do we need to do now?
         if (options.originator) {
             const dataConnection = this.connection;
